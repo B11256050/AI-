@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 
 // ==========================================
-// 1. Firebase 初始化配置 (使用您提供的設定)
+// 1. Firebase 初始化配置
 // ==========================================
 const firebaseConfig = {
   apiKey: "AIzaSyA3gqtrCyH4VLTDqmoWTXOn0ITCny3CNT0",
@@ -44,20 +44,34 @@ export default function App() {
   const [isAdminAuth, setIsAdminAuth] = useState(false);
   const [loginPassword, setLoginPassword] = useState('');
   
-  // 浮動視窗 (Modal) 狀態
+  // 浮動視窗 (Modal) 與 自訂提示 狀態
   const [activeModal, setActiveModal] = useState(null);
   const [currentData, setCurrentData] = useState(null);
   const [searchPhone, setSearchPhone] = useState('');
+  
+  const [toastMessage, setToastMessage] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+
+  // 自訂提示框函式
+  const showToast = (message) => {
+    setToastMessage(message);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const showConfirm = (message, onConfirmCallback) => {
+    setConfirmDialog({
+      message,
+      onConfirm: onConfirmCallback
+    });
+  };
 
   // 初始化資料與監聽 Firestore
   useEffect(() => {
-    // 檢查 LocalStorage 的登入紀錄
     const localAuth = localStorage.getItem('adminAuth');
     if (localAuth === 'true') setIsAdminAuth(true);
 
     const initSystem = async () => {
       try {
-        // 1. 確認並初始化管理員密碼設定
         const settingsRef = doc(db, 'settings', 'admin');
         const settingsSnap = await getDoc(settingsRef);
         if (!settingsSnap.exists()) {
@@ -67,19 +81,16 @@ export default function App() {
           setAdminConfig(settingsSnap.data());
         }
 
-        // 2. 訂閱房型資料
         const unsubRooms = onSnapshot(collection(db, 'rooms'), (snapshot) => {
           const roomData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           setRooms(roomData);
         });
 
-        // 3. 訂閱訂單資料
         const unsubOrders = onSnapshot(collection(db, 'orders'), (snapshot) => {
           const orderData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          // JavaScript 記憶體中降序排列 (依建立時間)
           orderData.sort((a, b) => b.createdAt - a.createdAt);
           setOrders(orderData);
-          setLoading(false); // 資料抓取完畢，解除載入畫面
+          setLoading(false);
         });
 
         return () => {
@@ -88,7 +99,7 @@ export default function App() {
         };
       } catch (error) {
         console.error("系統初始化錯誤：", error);
-        alert("無法連線至資料庫，請確認 Firebase 規則已設定為公開測試。");
+        showToast("無法連線至資料庫，請確認 Firebase 規則設定");
         setLoading(false);
       }
     };
@@ -105,8 +116,9 @@ export default function App() {
       setIsAdminAuth(true);
       localStorage.setItem('adminAuth', 'true');
       setLoginPassword('');
+      showToast("登入成功！");
     } else {
-      alert("密碼錯誤！");
+      showToast("密碼錯誤！請重試。");
     }
   };
 
@@ -114,25 +126,23 @@ export default function App() {
     setIsAdminAuth(false);
     localStorage.removeItem('adminAuth');
     setViewMode('customer');
+    showToast("已成功登出");
   };
 
-  // 檢查日期重疊 (防重複訂房機制)
+  // 檢查日期重疊
   const checkOverlap = (roomId, checkIn, checkOut, excludeOrderId = null) => {
     const newIn = new Date(checkIn).getTime();
     const newOut = new Date(checkOut).getTime();
     
-    // 過濾出同一間房、且非「取消」狀態的訂單
     const roomOrders = orders.filter(o => o.roomId === roomId && o.status !== 'cancelled' && o.id !== excludeOrderId);
     
     return roomOrders.some(o => {
       const existIn = new Date(o.checkInDate).getTime();
       const existOut = new Date(o.checkOutDate).getTime();
-      // 重疊條件：新入住時間小於舊退房時間 且 新退房時間大於舊入住時間
       return (newIn < existOut && newOut > existIn);
     });
   };
 
-  // 格式化日期顯示
   const formatDate = (timestamp) => {
     if (!timestamp) return '';
     const d = new Date(timestamp);
@@ -157,6 +167,39 @@ export default function App() {
   // ==========================================
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
+      
+      {/* 自訂通知 Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 bg-slate-800 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] animate-bounce flex items-center gap-3">
+          <Info className="w-5 h-5 text-blue-400" />
+          <span className="font-medium">{toastMessage}</span>
+        </div>
+      )}
+
+      {/* 自訂確認視窗 Confirm Dialog */}
+      {confirmDialog && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[100]">
+          <div className="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full mx-4 animate-in fade-in zoom-in duration-200">
+            <h3 className="text-xl font-bold text-slate-800 mb-2">確認操作</h3>
+            <p className="text-slate-600 mb-6">{confirmDialog.message}</p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setConfirmDialog(null)} 
+                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
+              >
+                取消
+              </button>
+              <button 
+                onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }} 
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+              >
+                確定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 導覽列 */}
       <nav className="bg-white shadow-sm sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -283,11 +326,11 @@ export default function App() {
                       </div>
                       {order.status !== 'cancelled' && (
                         <button 
-                          onClick={async () => {
-                            if(window.confirm('確定要取消這筆訂單嗎？')) {
+                          onClick={() => {
+                            showConfirm('確定要取消這筆訂單嗎？操作後將不可回復。', async () => {
                               await updateDoc(doc(db, 'orders', order.id), { status: 'cancelled' });
-                              alert('訂單已取消');
-                            }
+                              showToast('訂單已成功取消');
+                            });
                           }}
                           className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-sm font-medium transition-colors border border-red-200"
                         >
@@ -365,7 +408,7 @@ export default function App() {
                         <h2 className="text-xl font-bold">房型列表</h2>
                         <button 
                           onClick={() => { setCurrentData(null); setActiveModal('admin-room-form'); }}
-                          className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm"
+                          className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm transition-colors"
                         >
                           <Plus className="w-4 h-4"/> 新增房型
                         </button>
@@ -385,7 +428,7 @@ export default function App() {
                               <tr key={room.id} className="hover:bg-slate-50">
                                 <td className="p-4 flex items-center gap-3">
                                   <div className="w-12 h-12 bg-slate-200 rounded object-cover flex-shrink-0 overflow-hidden">
-                                    {room.imageUrl ? <img src={room.imageUrl} className="w-full h-full object-cover"/> : <Home className="w-6 h-6 m-3 text-slate-400" />}
+                                    {room.imageUrl ? <img src={room.imageUrl} className="w-full h-full object-cover" alt="room"/> : <Home className="w-6 h-6 m-3 text-slate-400" />}
                                   </div>
                                   <span className="font-medium">{room.name}</span>
                                 </td>
@@ -396,8 +439,11 @@ export default function App() {
                                     <button onClick={() => { setCurrentData(room); setActiveModal('admin-room-form'); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded" title="編輯">
                                       <Edit className="w-4 h-4" />
                                     </button>
-                                    <button onClick={async () => {
-                                      if(window.confirm('確定刪除此房型？')) await deleteDoc(doc(db, 'rooms', room.id));
+                                    <button onClick={() => {
+                                      showConfirm('確定刪除此房型？此操作無法復原。', async () => {
+                                        await deleteDoc(doc(db, 'rooms', room.id));
+                                        showToast('房型已刪除');
+                                      });
                                     }} className="p-2 text-red-600 hover:bg-red-50 rounded" title="刪除">
                                       <Trash2 className="w-4 h-4" />
                                     </button>
@@ -441,13 +487,14 @@ export default function App() {
                                 </td>
                                 <td className="p-4">
                                   <select 
-                                    className={`text-sm border-0 bg-transparent font-medium cursor-pointer focus:ring-0 ${
+                                    className={`text-sm border-0 bg-transparent font-medium cursor-pointer focus:ring-0 outline-none ${
                                       order.status === 'confirmed' ? 'text-green-600' : 
                                       order.status === 'cancelled' ? 'text-red-600' : 'text-yellow-600'
                                     }`}
                                     value={order.status}
                                     onChange={async (e) => {
                                       await updateDoc(doc(db, 'orders', order.id), { status: e.target.value });
+                                      showToast('訂單狀態已更新');
                                     }}
                                   >
                                     <option value="pending">處理中</option>
@@ -461,8 +508,11 @@ export default function App() {
                                     <button onClick={() => { setCurrentData(order); setActiveModal('admin-order-edit'); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded" title="編輯">
                                       <Edit className="w-4 h-4" />
                                     </button>
-                                    <button onClick={async () => {
-                                      if(window.confirm('確定刪除此訂單記錄？刪除後無法復原。')) await deleteDoc(doc(db, 'orders', order.id));
+                                    <button onClick={() => {
+                                      showConfirm('確定刪除此訂單記錄？刪除後無法復原。', async () => {
+                                        await deleteDoc(doc(db, 'orders', order.id));
+                                        showToast('訂單記錄已刪除');
+                                      });
                                     }} className="p-2 text-red-600 hover:bg-red-50 rounded" title="刪除">
                                       <Trash2 className="w-4 h-4" />
                                     </button>
@@ -488,7 +538,7 @@ export default function App() {
                           const newPwd = e.target.newPwd.value;
                           await updateDoc(doc(db, 'settings', 'admin'), { password: newPwd });
                           setAdminConfig({ password: newPwd });
-                          alert('密碼已成功更新！');
+                          showToast('後台密碼已成功更新！');
                           e.target.reset();
                         }}>
                           <div className="space-y-4">
@@ -515,9 +565,9 @@ export default function App() {
       {/* ==================== 浮動視窗 (Modals) ==================== */}
       {activeModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden my-auto relative">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden my-auto relative animate-in zoom-in duration-200">
             
-            <button onClick={() => setActiveModal(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 z-10">
+            <button onClick={() => setActiveModal(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 z-10 transition-colors">
               <XCircle className="w-6 h-6" />
             </button>
 
@@ -533,11 +583,11 @@ export default function App() {
                   const data = Object.fromEntries(formData.entries());
                   
                   if (new Date(data.checkInDate) >= new Date(data.checkOutDate)) {
-                    return alert('退房日期必須晚於入住日期！');
+                    return showToast('退房日期必須晚於入住日期！');
                   }
                   
                   if (checkOverlap(currentData.room.id, data.checkInDate, data.checkOutDate)) {
-                    return alert('很抱歉，該區間已有其他人預訂，請選擇其他日期。');
+                    return showToast('很抱歉，該區間已有其他人預訂，請選擇其他日期。');
                   }
 
                   const orderData = {
@@ -550,32 +600,32 @@ export default function App() {
 
                   try {
                     await addDoc(collection(db, 'orders'), orderData);
-                    alert('預訂成功！請記住您的手機號碼以利查詢。');
+                    showToast('預訂成功！請記住您的手機號碼以利查詢。');
                     setActiveModal(null);
                     setCustomerTab('my-orders');
                     setSearchPhone(data.phone);
                   } catch (err) {
-                    alert('預訂失敗，請重試。');
+                    showToast('預訂失敗，請檢查網路連線或重試。');
                   }
                 }} className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">姓名</label>
-                      <input type="text" name="customerName" required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="text" name="customerName" required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
                     </div>
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">手機號碼</label>
-                      <input type="tel" name="phone" required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="tel" name="phone" required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">入住日期</label>
-                      <input type="date" name="checkInDate" required min={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="date" name="checkInDate" required min={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
                     </div>
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">退房日期</label>
-                      <input type="date" name="checkOutDate" required min={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="date" name="checkOutDate" required min={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
                     </div>
                   </div>
                   <div className="pt-4">
@@ -598,32 +648,34 @@ export default function App() {
                   
                   if (currentData?.id) {
                     await updateDoc(doc(db, 'rooms', currentData.id), data);
+                    showToast('房型已成功更新');
                   } else {
                     await addDoc(collection(db, 'rooms'), data);
+                    showToast('已成功新增房型');
                   }
                   setActiveModal(null);
                 }} className="space-y-4">
                   <div>
                     <label className="block text-sm text-slate-600 mb-1">房型名稱</label>
-                    <input type="text" name="name" defaultValue={currentData?.name || ''} required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                    <input type="text" name="name" defaultValue={currentData?.name || ''} required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">每晚價格</label>
-                      <input type="number" name="price" defaultValue={currentData?.price || ''} required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="number" name="price" defaultValue={currentData?.price || ''} required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
                     </div>
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">容納人數</label>
-                      <input type="number" name="capacity" defaultValue={currentData?.capacity || ''} required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="number" name="capacity" defaultValue={currentData?.capacity || ''} required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
                     </div>
                   </div>
                   <div>
                     <label className="block text-sm text-slate-600 mb-1">圖片網址 (URL)</label>
-                    <input type="url" name="imageUrl" defaultValue={currentData?.imageUrl || ''} placeholder="https://..." className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                    <input type="url" name="imageUrl" defaultValue={currentData?.imageUrl || ''} placeholder="https://..." className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                   <div>
                     <label className="block text-sm text-slate-600 mb-1">房型描述</label>
-                    <textarea name="description" defaultValue={currentData?.description || ''} rows="3" className="w-full border border-slate-300 rounded-lg px-3 py-2"></textarea>
+                    <textarea name="description" defaultValue={currentData?.description || ''} rows="3" className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
                   </div>
                   <div className="pt-4">
                     <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-lg transition-colors">
@@ -644,11 +696,11 @@ export default function App() {
                   const data = Object.fromEntries(formData.entries());
                   
                   if (new Date(data.checkInDate) >= new Date(data.checkOutDate)) {
-                    return alert('退房日期必須晚於入住日期！');
+                    return showToast('退房日期必須晚於入住日期！');
                   }
 
                   if (checkOverlap(currentData.roomId, data.checkInDate, data.checkOutDate, currentData.id)) {
-                    return alert('修改後的日期與該房型其他訂單衝突！');
+                    return showToast('修改後的日期與該房型其他訂單衝突！');
                   }
 
                   await updateDoc(doc(db, 'orders', currentData.id), {
@@ -657,27 +709,27 @@ export default function App() {
                     customerName: data.customerName,
                     phone: data.phone
                   });
-                  alert('訂單更新成功');
+                  showToast('訂單資料已更新成功');
                   setActiveModal(null);
                 }} className="space-y-4">
                    <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">顧客姓名</label>
-                      <input type="text" name="customerName" defaultValue={currentData.customerName} required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="text" name="customerName" defaultValue={currentData.customerName} required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
                     </div>
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">聯絡電話</label>
-                      <input type="tel" name="phone" defaultValue={currentData.phone} required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="tel" name="phone" defaultValue={currentData.phone} required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">入住日期</label>
-                      <input type="date" name="checkInDate" defaultValue={currentData.checkInDate} required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="date" name="checkInDate" defaultValue={currentData.checkInDate} required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
                     </div>
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">退房日期</label>
-                      <input type="date" name="checkOutDate" defaultValue={currentData.checkOutDate} required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                      <input type="date" name="checkOutDate" defaultValue={currentData.checkOutDate} required className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" />
                     </div>
                   </div>
                   <div className="pt-4">
